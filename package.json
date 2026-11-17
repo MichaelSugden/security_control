@@ -1,0 +1,21 @@
+{
+  "name": "securitycontrol-v2",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Security Control website: static pages served by a small Node server with a contact form endpoint.",
+  "type": "module",
+  "main": "server.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --env-file=.env server.js",
+    "test": "node test/run.js"
+  },
+  "dependencies": {
+    "compression": "1.8.2",
+    "express": "5.3.0",
+    "nodemailer": "10.3.1"
+  }
+}

@@ -1,0 +1,213 @@
+{
+  "$comment": "Old path to new path: exact match, one 301 hop. Each path is listed with its trailing slash; the server also matches it without one. Paths under \"gone\" answer 410. Source: the v2 URL map, section 2.",
+  "redirects": [
+    {
+      "from": "/en/security-services/",
+      "to": "/en/services/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/en/security-services/specialised-security/",
+      "to": "/en/services/specialised-security/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/en/security-services/advanced-security/",
+      "to": "/en/services/advanced-security/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/en/security-services/training-services/",
+      "to": "/en/services/security-training/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/en/security-services/specialised-security/executive-protection/",
+      "to": "/en/services/executive-protection/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/en/security-services/specialised-security/family-security-programme/",
+      "to": "/en/services/family-security-programme/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/en/security-services/advanced-security/site-security/",
+      "to": "/en/services/site-security/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/en/security-services/advanced-security/event-security/",
+      "to": "/en/services/event-security/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/en/security-services/advanced-security/dog-security/",
+      "to": "/en/services/security-dogs/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/en/security-services/advanced-security/fireguards/",
+      "to": "/en/services/fire-watch/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/en/security-services/advanced-security/equipment/",
+      "to": "/en/services/security-equipment/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/en/security-services/training-services/driving-courses/",
+      "to": "/en/services/protective-driving/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/en/security-services/training-services/security-awareness/",
+      "to": "/en/services/security-awareness/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/en/security-services/training-services/medical-courses/",
+      "to": "/en/services/medical-training/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/nl/security-services/",
+      "to": "/nl/diensten/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/nl/security-services/specialised-security/",
+      "to": "/nl/diensten/specialistische-beveiliging/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/nl/security-services/advanced-security/",
+      "to": "/nl/diensten/geavanceerde-beveiliging/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/nl/security-services/training-services/",
+      "to": "/nl/diensten/veiligheidstraining/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/nl/security-services/specialised-security/executive-protection/",
+      "to": "/nl/diensten/persoonsbeveiliging/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/nl/security-services/specialised-security/family-security-programme/",
+      "to": "/nl/diensten/familiebeveiliging/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/nl/security-services/advanced-security/site-security/",
+      "to": "/nl/diensten/objectbeveiliging/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/nl/security-services/advanced-security/event-security/",
+      "to": "/nl/diensten/evenementenbeveiliging/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/nl/security-services/advanced-security/dog-security/",
+      "to": "/nl/diensten/beveiligingshond/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/nl/security-services/advanced-security/fireguards/",
+      "to": "/nl/diensten/brandwacht/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/nl/security-services/advanced-security/equipment/",
+      "to": "/nl/diensten/beveiligingsmiddelen/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/nl/security-services/training-services/driving-courses/",
+      "to": "/nl/diensten/rijvaardigheidstraining/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/nl/security-services/training-services/security-awareness/",
+      "to": "/nl/diensten/security-awareness/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/nl/security-services/training-services/medical-courses/",
+      "to": "/nl/diensten/medische-training/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/nl/about-us/",
+      "to": "/nl/over-ons/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/nl/faq/",
+      "to": "/nl/veelgestelde-vragen/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/nl/contact-us/",
+      "to": "/nl/contact/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/nl/privacy-policy/",
+      "to": "/nl/privacyverklaring/",
+      "group": "v1-map"
+    },
+    {
+      "from": "/contact/",
+      "to": "/nl/contact/",
+      "group": "legacy-2020"
+    },
+    {
+      "from": "/security-services/",
+      "to": "/nl/diensten/",
+      "group": "legacy-2020"
+    },
+    {
+      "from": "/family-security-programme/",
+      "to": "/nl/diensten/familiebeveiliging/",
+      "group": "legacy-2020"
+    },
+    {
+      "from": "/nl/family-security-programme/",
+      "to": "/nl/diensten/familiebeveiliging/",
+      "group": "legacy-2020"
+    },
+    {
+      "from": "/opleidingen-en-trainingen/",
+      "to": "/nl/diensten/veiligheidstraining/",
+      "group": "legacy-2020"
+    },
+    {
+      "from": "/nl/opleidingen-en-trainingen/",
+      "to": "/nl/diensten/veiligheidstraining/",
+      "group": "legacy-2020"
+    },
+    {
+      "from": "/maatschappelijk-verantwoord/",
+      "to": "/nl/over-ons/",
+      "group": "legacy-2020"
+    },
+    {
+      "from": "/nl/maatschappelijk-verantwoord/",
+      "to": "/nl/over-ons/",
+      "group": "legacy-2020"
+    }
+  ],
+  "gone": [
+    "/algemene-voorwaarden/",
+    "/nl/algemene-voorwaarden/",
+    "/sample/",
+    "/nl/sample/",
+    "/project/",
+    "/nl/project/"
+  ]
+}
