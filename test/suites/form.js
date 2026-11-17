@@ -1,6 +1,6 @@
 import addressparser from 'nodemailer/lib/addressparser';
 import { createApp } from '../../src/app.js';
-import { RESULT_PAGES, mailConfigFromEnv } from '../../src/contact.js';
+import { RESULT_PAGES, mailConfigFromEnv, trustProxyFromEnv } from '../../src/contact.js';
 import { assert, serve, request, readJson, fixturePublic, mockTransport } from '../lib.js';
 
 const MAIL_FROM = 'Security Control website <info@securitycontrol.nl>';
@@ -14,16 +14,31 @@ const VISITOR = {
   message: 'Testbericht met twee regels.\r\nTweede regel.',
 };
 
+// Planted defect: any form reply becomes "unavailable", as when the mail check ran before validation.
+function mailCheckFirst(app) {
+  return (req, res) => {
+    res.json = function json(obj) {
+      const proto = Object.getPrototypeOf(this);
+      if (obj && obj.code === 'invalid') return proto.json.call(this.status(503), { ok: false, code: 'unavailable' });
+      return proto.json.call(this, obj);
+    };
+    app(req, res);
+  };
+}
+
 const enc = (obj) => new URLSearchParams(obj).toString();
 const headerBlock = (raw) => raw.split('\r\n\r\n')[0];
 
 export default {
   name: 'form',
-  declared: 39,
+  declared: 44,
   plantedMustFail: [
     'fill time under 3 s counts as spam: ok, no mail',
     'rate limit: the 6th send from one IP in an hour is refused',
     'honeypot filled: ok, no mail',
+    'elapsed decides the fill time, not the device clock',
+    'rate limit: a spoofed X-Forwarded-For does not reset the limit',
+    'SMTP not configured: an invalid form answers invalid with fields',
   ],
   async build({ planted }) {
     let clock = 1_800_000_000_000;
@@ -35,14 +50,19 @@ export default {
     const ok = mockTransport();
     const make = (mail, extra = {}) => serve(createApp({ publicDir: fx.dir, redirects, logger, now, mail, ...extra }));
     // Planted: no minimum fill time, a rate limit that never trips, and (in post) the honeypot value moved to another field.
-    const plantOpts = planted ? { minFillMs: 0, rateLimit: { max: 1000, windowMs: 3600000 } } : {};
+    // Planted also (below): trust in the leftmost X-Forwarded-For, and the old mail-check-first order.
+    const plantOpts = planted
+      ? { minFillMs: 0, rateLimit: { max: 1000, windowMs: 3600000 } }
+      : {};
     const main = await make({ transport: ok.transport, from: MAIL_FROM, to: MAIL_TO }, plantOpts);
+    // Own server for the proxy case, so its proof does not lean on the planted rate limit.
+    const proxied = await make({ transport: ok.transport, from: MAIL_FROM, to: MAIL_TO }, { trustProxy: planted ? true : trustProxyFromEnv({}) });
     const failing = await make({ transport: mockTransport({ fail: true }).transport, from: MAIL_FROM, to: MAIL_TO });
-    const unconfigured = await make(null);
+    const unconfigured = planted ? await serve(mailCheckFirst(createApp({ publicDir: fx.dir, redirects, logger, now, mail: null }))) : await make(null);
 
     let ipSeq = 0;
     const post = (srv, fields, { json = true, ip, body, type = 'application/x-www-form-urlencoded', accept } = {}) => {
-      const form = { ts: String(clock - 10000), website: '', ...fields };
+      const form = { elapsed: '10000', website: '', ...fields };
       if (planted && 'website' in fields) {
         form.website_ = form.website;
         delete form.website;
@@ -107,10 +127,10 @@ export default {
         assert.equal(r.headers.location, '/nl/contact/bedankt/');
       }],
       ['valid with a JSON request body', async () => {
-        const r = await send({}, { type: 'application/json', body: JSON.stringify({ lang: 'en', ...VISITOR, ts: String(clock - 5000), website: '' }) });
+        const r = await send({}, { type: 'application/json', body: JSON.stringify({ lang: 'en', ...VISITOR, elapsed: '5000', website: '' }) });
         assert.deepEqual(JSON.parse(r.text), { ok: true });
       }],
-      ['no ts (no-JS) is not spam: the mail is sent', async () => {
+      ['no elapsed (no-JS) is not spam: the mail is sent', async () => {
         const before = count();
         const r = await post(main, {}, { json: false, body: enc({ lang: 'nl', ...VISITOR, website: '' }) });
         assert.equal(r.headers.location, '/nl/contact/bedankt/');
@@ -137,7 +157,7 @@ export default {
       }],
       ['several failures come back together as a field map', () => expectInvalid({ email: 'nope', message: '' }, { email: 'invalid', message: 'missing' })],
       ['a field sent twice is invalid', async () => {
-        const r = await post(main, {}, { body: `${enc({ lang: 'en', ...VISITOR, ts: String(clock - 9000) })}&name=second` });
+        const r = await post(main, {}, { body: `${enc({ lang: 'en', ...VISITOR, elapsed: '9000' })}&name=second` });
         assert.deepEqual(JSON.parse(r.text), { ok: false, code: 'invalid', fields: { name: 'invalid' } });
       }],
       ['invalid EN, no-JS: 303 to the not-sent page', async () => {
@@ -160,16 +180,32 @@ export default {
       }],
       ['fill time under 3 s counts as spam: ok, no mail', async () => {
         const before = count();
-        const r = await send({ lang: 'en', ...VISITOR, ts: String(clock - 2999) });
+        const r = await send({ lang: 'en', ...VISITOR, elapsed: '2999' });
         assert.deepEqual(JSON.parse(r.text), { ok: true });
-        const n = await send({ lang: 'en', ...VISITOR, ts: String(clock - 500) }, { json: false });
+        const n = await send({ lang: 'en', ...VISITOR, elapsed: '500' }, { json: false });
         assert.equal(n.headers.location, '/en/contact-us/thank-you/');
         assert.equal(count(), before, 'mail sent for a too-fast fill');
       }],
       ['fill time of exactly 3 s sends', async () => {
         const before = count();
-        await send({ lang: 'en', ...VISITOR, ts: String(clock - 3000) });
+        await send({ lang: 'en', ...VISITOR, elapsed: '3000' });
         assert.equal(count(), before + 1);
+      }],
+      ['elapsed decides the fill time, not the device clock', async () => {
+        const before = count();
+        await send({ lang: 'en', ...VISITOR, ts: String(clock + 3600000), elapsed: '20000' });
+        assert.equal(count(), before + 1, 'a device clock far ahead blocked a real message');
+        const r = await send({ lang: 'en', ...VISITOR, ts: String(clock - 3600000), elapsed: '800' });
+        assert.deepEqual(JSON.parse(r.text), { ok: true });
+        assert.equal(count(), before + 1, 'a 0.8 s fill was sent');
+      }],
+      ['a non-numeric or negative elapsed counts as spam', async () => {
+        const before = count();
+        for (const elapsed of ['abc', '-5000', '1e9', '12.5']) {
+          const r = await send({ lang: 'en', ...VISITOR, elapsed });
+          assert.deepEqual(JSON.parse(r.text), { ok: true }, elapsed);
+        }
+        assert.equal(count(), before, 'mail sent for a malformed elapsed');
       }],
       ['rate limit: the 6th send from one IP in an hour is refused', async () => {
         const ip = '203.0.113.7';
@@ -189,6 +225,24 @@ export default {
         clock += 3600 * 1000;
         assert.equal((await send({ lang: 'en', ...VISITOR }, { ip })).status, 200, 'still blocked after an hour');
       }],
+      ['rate limit: a spoofed X-Forwarded-For does not reset the limit', async () => {
+        const proxyAdded = '203.0.113.30';
+        const before = count();
+        for (let i = 0; i < 5; i += 1) {
+          const r = await post(proxied, { lang: 'en', ...VISITOR }, { ip: `10.9.8.${i}, ${proxyAdded}` });
+          assert.equal(r.status, 200, `send ${i + 1}`);
+        }
+        const sixth = await post(proxied, { lang: 'en', ...VISITOR }, { ip: `192.0.2.99, ${proxyAdded}` });
+        assert.equal(sixth.status, 429, 'a new leftmost address reset the limit');
+        assert.equal(count(), before + 5);
+      }],
+      ['TRUST_PROXY: default 1 hop, a number of hops, or false', () => {
+        assert.equal(trustProxyFromEnv({}), 1);
+        assert.equal(trustProxyFromEnv({ TRUST_PROXY: '' }), 1);
+        assert.equal(trustProxyFromEnv({ TRUST_PROXY: '2' }), 2);
+        assert.equal(trustProxyFromEnv({ TRUST_PROXY: 'false' }), false);
+        assert.equal(trustProxyFromEnv({ TRUST_PROXY: 'true' }), 1);
+      }],
       ['invalid and spam submissions do not use up the rate limit', async () => {
         const ip = '203.0.113.9';
         for (let i = 0; i < 6; i += 1) await send({ lang: 'en', ...VISITOR, email: '' }, { ip });
@@ -202,7 +256,14 @@ export default {
         const n = await post(failing, { lang: 'nl', ...VISITOR }, { json: false });
         assert.equal(n.headers.location, '/nl/contact/niet-verzonden/');
       }],
-      ['SMTP not configured: code unavailable, and the server still serves', async () => {
+      ['SMTP not configured: an invalid form answers invalid with fields', async () => {
+        const r = await post(unconfigured, { lang: 'en', ...VISITOR, email: 'jan@', message: '' });
+        assert.equal(r.status, 422);
+        assert.deepEqual(JSON.parse(r.text), { ok: false, code: 'invalid', fields: { email: 'invalid', message: 'missing' } });
+        const n = await post(unconfigured, { lang: 'nl', ...VISITOR, name: '' }, { json: false });
+        assert.equal(n.headers.location, '/nl/contact/niet-verzonden/');
+      }],
+      ['SMTP not configured: a valid form answers unavailable, and the server still serves', async () => {
         const r = await post(unconfigured, { lang: 'en', ...VISITOR });
         assert.equal(r.status, 503);
         assert.deepEqual(JSON.parse(r.text), { ok: false, code: 'unavailable' });
@@ -279,6 +340,6 @@ export default {
       }],
     ];
 
-    return { cases, close: async () => { await main.close(); await failing.close(); await unconfigured.close(); } };
+    return { cases, close: async () => { await proxied.close(); await main.close(); await failing.close(); await unconfigured.close(); } };
   },
 };

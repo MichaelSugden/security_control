@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApp } from './src/app.js';
-import { mailConfigFromEnv } from './src/contact.js';
+import { mailConfigFromEnv, trustProxyFromEnv } from './src/contact.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const redirects = JSON.parse(fs.readFileSync(path.join(root, 'redirects.json'), 'utf8'));
@@ -12,9 +12,7 @@ if (!mail) {
   console.warn(`contact form: SMTP is not configured (missing ${missing.join(', ')}); the form answers "unavailable"`);
 }
 
-// TRUST_PROXY: "true" (default) or the number of proxy hops in front of the app.
-const trustRaw = (process.env.TRUST_PROXY || 'true').trim();
-const trustProxy = /^\d+$/.test(trustRaw) ? Number(trustRaw) : trustRaw !== 'false';
+const trustProxy = trustProxyFromEnv(process.env);
 
 const app = createApp({ publicDir: path.join(root, 'public'), redirects, mail, trustProxy });
 const port = Number(process.env.PORT) || 3000;

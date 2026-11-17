@@ -62,15 +62,13 @@ export function validate(body) {
   return { values, fields };
 }
 
-// Honeypot filled, or a render time under the minimum fill time. A missing ts (no JS) is not spam.
-export function isSpam(body, now, minFillMs) {
-  if (typeof body.website !== 'string' && body.website !== undefined) return true;
+// Honeypot filled, or a fill time (elapsed ms, measured on the page) under the minimum. No elapsed (no JS) is not spam.
+export function isSpam(body, minFillMs) {
+  if (body.website !== undefined && typeof body.website !== 'string') return true;
   if (typeof body.website === 'string' && body.website.trim() !== '') return true;
-  if (body.ts === undefined || body.ts === '') return false;
-  const ts = Number(body.ts);
-  if (typeof body.ts !== 'string' || !Number.isFinite(ts)) return true;
-  const elapsed = now - ts;
-  return elapsed >= 0 && elapsed < minFillMs;
+  if (body.elapsed === undefined || body.elapsed === '') return false;
+  const elapsed = typeof body.elapsed === 'string' && /^\d+$/.test(body.elapsed.trim()) ? Number(body.elapsed) : NaN;
+  return !Number.isFinite(elapsed) || elapsed < minFillMs;
 }
 
 // In-memory sliding window per IP.
@@ -93,6 +91,14 @@ export function createRateLimiter({ max, windowMs, now }) {
       return { ok: true };
     },
   };
+}
+
+// TRUST_PROXY: number of proxy hops (default 1, the address the proxy appended), or "false".
+export function trustProxyFromEnv(env) {
+  const raw = String(env.TRUST_PROXY ?? '').trim().toLowerCase();
+  if (/^\d+$/.test(raw)) return Number(raw);
+  if (raw === 'false') return false;
+  return 1;
 }
 
 // SMTP settings from env; returns null when the form cannot send.
@@ -187,11 +193,12 @@ export function contactRouter({ mail, logger, minFillMs, rateLimit, now, sendTim
       const body = req.body && typeof req.body === 'object' ? req.body : {};
       const lang = body.lang === 'nl' ? 'nl' : 'en';
 
-      if (isSpam(body, now(), minFillMs)) return reply(req, res, lang, 'ok', { log: 'spam' });
-      if (!transporter) return reply(req, res, lang, 'unavailable');
+      if (isSpam(body, minFillMs)) return reply(req, res, lang, 'ok', { log: 'spam' });
 
+      // Field errors first, so the page can show them even when sending is unavailable.
       const { values, fields } = validate(body);
       if (Object.keys(fields).length) return reply(req, res, lang, 'invalid', { fields });
+      if (!transporter) return reply(req, res, lang, 'unavailable');
 
       const slot = limiter.take(req.ip || 'unknown');
       if (!slot.ok) {

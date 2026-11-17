@@ -1,5 +1,5 @@
 {
-  "$comment": "Old path to new path: exact match, one 301 hop. Each path is listed with its trailing slash; the server also matches it without one. Paths under \"gone\" answer 410. Source: the v2 URL map, section 2.",
+  "$comment": "Old path to new path: exact match, one 301 hop. Each path is listed with its trailing slash; the server also matches it without one. Paths under \"gone\" answer 410. Source: the v2 URL map, section 2. Every \"gone\" path comes from the Dutch 2020 site, so goneLang \"nl\" serves them the NL 404 body.",
   "redirects": [
     {
       "from": "/en/security-services/",
@@ -209,5 +209,6 @@
     "/nl/sample/",
     "/project/",
     "/nl/project/"
-  ]
+  ],
+  "goneLang": "nl"
 }

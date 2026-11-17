@@ -26,11 +26,13 @@ function plant(data) {
   copy.redirects[0].to = '/en/services/missing-page/';
   copy.redirects[1].to = copy.redirects[2].from;
   copy.gone.pop();
+  delete copy.goneLang;
   return copy;
 }
 
 const expected = htaccessRows();
-const pathLang = (p) => (p.startsWith('/nl/') ? 'nl' : 'en');
+// Every gone path comes from the Dutch 2020 site: the NL 404 body, root-level paths included.
+const GONE_LANG = 'nl';
 const Q = '?utm_source=test&a=1';
 
 export default {
@@ -43,6 +45,7 @@ export default {
     `row ${expected.redirects[1].from}`,
     `row ${expected.redirects[2].from}`,
     `gone ${expected.gone[5]}`,
+    `gone ${expected.gone[0]}`,
   ],
   async build({ planted }) {
     const fileData = readJson('redirects.json');
@@ -63,6 +66,7 @@ export default {
       ['data: floor of 40 redirects and 6 gone paths', () => {
         assert.equal(data.redirects.length, 40);
         assert.equal(data.gone.length, 6);
+        assert.equal(data.goneLang, GONE_LANG, 'goneLang');
       }],
       ['data: no source is a live page and every target is a live page, not a source', () => {
         const sources = new Set(data.redirects.map((r) => r.from));
@@ -92,11 +96,11 @@ export default {
         for (const variant of [p, p.replace(/\/$/, '')]) {
           const r = await get(variant);
           assert.equal(r.status, 410, `${variant} status`);
-          const file = realNotFound[pathLang(variant)];
+          const file = realNotFound[GONE_LANG];
           if (fs.existsSync(file)) assert.equal(r.text, fs.readFileSync(file, 'utf8'), `${variant} body language`);
           const f = await request(fixture.port, { path: variant });
           assert.equal(f.status, 410);
-          assert.equal(f.text, fx[pathLang(variant)], `${variant} fixture body language`);
+          assert.equal(f.text, fx[GONE_LANG], `${variant} fixture body language`);
         }
       }]);
     }

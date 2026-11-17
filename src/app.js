@@ -38,7 +38,7 @@ export function loadRedirects(data) {
     gone.add(p);
     gone.add(p.replace(/\/$/, ''));
   }
-  return { map, gone };
+  return { map, gone, goneLang: data.goneLang === 'nl' ? 'nl' : null };
 }
 
 export function createApp(options) {
@@ -49,13 +49,13 @@ export function createApp(options) {
     logger = console,
     minFillMs = 3000,
     rateLimit = { max: 5, windowMs: 60 * 60 * 1000 },
-    trustProxy = true,
+    trustProxy = 1,
     now = Date.now,
   } = options;
 
   const site = indexSite(publicDir);
   const csp = buildCsp(site.inline);
-  const { map, gone } = loadRedirects(redirects);
+  const { map, gone, goneLang } = loadRedirects(redirects);
   const readPage = (rel) => {
     const file = path.join(publicDir, rel);
     return fs.existsSync(file) ? fs.readFileSync(file) : null;
@@ -89,8 +89,8 @@ export function createApp(options) {
 
   app.use(contactRouter({ mail, logger, minFillMs, rateLimit, now }));
 
-  const sendNotFound = (req, res, status) => {
-    const lang = req.path === '/nl' || req.path.startsWith('/nl/') ? 'nl' : 'en';
+  const sendNotFound = (req, res, status, forceLang = null) => {
+    const lang = forceLang || (req.path === '/nl' || req.path.startsWith('/nl/') ? 'nl' : 'en');
     res.status(status).set('Cache-Control', 'no-cache');
     const body = notFound[lang] || notFound.en;
     if (body) return res.type('html').send(body);
@@ -105,7 +105,7 @@ export function createApp(options) {
     const pathname = q === -1 ? rawUrl : rawUrl.slice(0, q);
     const search = q === -1 ? '' : rawUrl.slice(q);
 
-    if (gone.has(pathname)) return sendNotFound(req, res, 410);
+    if (gone.has(pathname)) return sendNotFound(req, res, 410, goneLang);
 
     let target = pathname;
     if (map.has(pathname)) target = map.get(pathname);
