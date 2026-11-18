@@ -207,8 +207,19 @@ export function sparkpostSender({ apiKey, baseUrl, timeoutMs = 10000, fetch: fet
         const timeout = err && (err.name === 'TimeoutError' || err.name === 'AbortError');
         throw Object.assign(new Error('sparkpost request failed'), { code: `sparkpost=${timeout ? 'timeout' : 'network'}` });
       }
-      if (res.body) await res.body.cancel().catch(() => {});
-      if (res.status < 200 || res.status > 299) throw Object.assign(new Error('sparkpost refused'), { code: `sparkpost=${res.status}` });
+      if (res.status < 200 || res.status > 299) {
+        if (res.body) await res.body.cancel().catch(() => {});
+        throw Object.assign(new Error('sparkpost refused'), { code: `sparkpost=${res.status}` });
+      }
+      // A 2xx counts only when SparkPost accepted at least one recipient; the body is read, never logged.
+      let accepted = 0;
+      try {
+        const reply = JSON.parse(await res.text());
+        accepted = Number(reply && reply.results && reply.results.total_accepted_recipients) || 0;
+      } catch {
+        accepted = 0;
+      }
+      if (accepted < 1) throw Object.assign(new Error('sparkpost accepted no recipient'), { code: `sparkpost=${res.status}-rejected` });
       return `sparkpost=${res.status}`;
     },
   };

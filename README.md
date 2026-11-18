@@ -70,9 +70,11 @@ when `SPARKPOST_API_KEY` is set, otherwise through SMTP. With neither configured
   owner adds it at the DNS host; the web switch-over below never touches mail records.
 - Open and click tracking are off and the message is sent as transactional, so the plain-text body
   arrives as written.
-- Each request has a 10 second limit. A refusal, a timeout or a network error answers `error` (the
-  not-sent page without JS). The log line names the outcome and `sparkpost=<HTTP status>`, `timeout` or
-  `network`, never the key, the visitor's data or SparkPost's reply.
+- Each request has a 10 second limit. A message counts as sent only when SparkPost answers 2xx and its
+  reply says at least one recipient was accepted (`results.total_accepted_recipients`). A refusal, a 2xx
+  that accepted no recipient or cannot be read, a timeout or a network error answers `error` (the not-sent
+  page without JS). The log line names the outcome and `sparkpost=<HTTP status>`, `<status>-rejected`,
+  `timeout` or `network`, never the key, the visitor's data or SparkPost's reply.
 
 ### Mail through SMTP (the alternative)
 

@@ -32,6 +32,7 @@ function mockFetch() {
   };
   return { fn, calls, then: (h) => queue.push(h) };
 }
+const accepted = (body) => () => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
 const answer = (status) => () => new Response(JSON.stringify({ errors: [{ message: `refused ${BODY_MARKER} ${KEY}` }] }), { status });
 const hang = (init) => new Promise((resolve, reject) => {
   const t = setTimeout(() => resolve(new Response('{}', { status: 200 })), 20000);
@@ -39,7 +40,8 @@ const hang = (init) => new Promise((resolve, reject) => {
   if (init.signal) init.signal.addEventListener('abort', () => { clearTimeout(t); reject(init.signal.reason); });
 });
 
-// Planted defects between the app and SparkPost: EU and US hosts swapped, no key, tracking on, raw Reply-To, refusals read as 200, no time limit.
+// Planted defects between the app and SparkPost: EU and US hosts swapped, no key, tracking on, raw Reply-To, no time limit,
+// and every reply turned into an accepted 200 (the old rule: any 2xx is a sent message).
 const planted = (fn) => async (url, init) => {
   const body = JSON.parse(init.body);
   body.options.open_tracking = true;
@@ -48,12 +50,12 @@ const planted = (fn) => async (url, init) => {
   delete headers.Authorization;
   const swapped = url.includes('api.eu.sparkpost.com') ? url.replace('api.eu.sparkpost.com', 'api.sparkpost.com') : url.replace('api.sparkpost.com', 'api.eu.sparkpost.com');
   const res = await fn(swapped, { ...init, headers, body: JSON.stringify(body), signal: undefined });
-  return res.status >= 400 ? new Response('{}', { status: 200 }) : res;
+  return new Response(JSON.stringify({ results: { total_accepted_recipients: 1 } }), { status: res.status >= 400 ? 200 : res.status });
 };
 
 export default {
   name: 'sparkpost',
-  declared: 15,
+  declared: 18,
   plantedMustFail: [
     'request URL per region: EU by default, the US host only for an explicit us',
     'POST with the key in Authorization and a JSON body',
@@ -62,6 +64,9 @@ export default {
     'a 4xx reply answers error: 502 JSON and the not-sent page',
     'a 5xx reply answers error',
     'a request over the time limit answers error within the limit',
+    'a 200 with 0 accepted recipients answers error',
+    'a 200 without results answers error',
+    'a 200 with a body that is not JSON answers error',
   ],
   async build({ planted: plant }) {
     const logs = [];
@@ -150,14 +155,37 @@ export default {
         await post(us.srv, {});
         assert.deepEqual(us.mock.calls.at(-1).body.options, { transactional: true, open_tracking: false, click_tracking: false });
       }],
-      ['a 2xx reply answers ok, and the thank-you page without JS', async () => {
-        eu.mock.then(() => new Response('{}', { status: 202 }));
+      ['a 2xx reply with 1 accepted recipient answers ok, and the thank-you page without JS', async () => {
+        eu.mock.then(() => new Response(JSON.stringify({ results: { total_accepted_recipients: 1, total_rejected_recipients: 0, id: '7' } }), { status: 202 }));
         const r = await post(eu.srv, {});
         assert.equal(r.status, 200);
         assert.deepEqual(JSON.parse(r.text), { ok: true });
         const n = await post(eu.srv, { lang: 'nl' }, { json: false });
         assert.equal(n.status, 303);
         assert.equal(n.headers.location, '/nl/contact/bedankt/');
+      }],
+      ['a 200 with 0 accepted recipients answers error', async () => {
+        eu.mock.then(accepted({ results: { total_accepted_recipients: 0, total_rejected_recipients: 1, id: '8' } }));
+        const r = await post(eu.srv, {});
+        assert.equal(r.status, 502);
+        assert.deepEqual(JSON.parse(r.text), { ok: false, code: 'error' });
+        eu.mock.then(accepted({ results: { total_accepted_recipients: 0 } }));
+        const n = await post(eu.srv, { lang: 'nl' }, { json: false });
+        assert.equal(n.headers.location, '/nl/contact/niet-verzonden/');
+      }],
+      ['a 200 without results answers error', async () => {
+        for (const body of [{}, { results: {} }, { results: { total_accepted_recipients: 'one' } }, null]) {
+          eu.mock.then(accepted(body));
+          const r = await post(eu.srv, {});
+          assert.deepEqual(JSON.parse(r.text), { ok: false, code: 'error' }, JSON.stringify(body));
+        }
+      }],
+      ['a 200 with a body that is not JSON answers error', async () => {
+        for (const text of ['', 'OK', `<html>${BODY_MARKER}</html>`]) {
+          eu.mock.then(() => new Response(text, { status: 200 }));
+          const r = await post(eu.srv, {});
+          assert.deepEqual(JSON.parse(r.text), { ok: false, code: 'error' }, JSON.stringify(text));
+        }
       }],
       ['a 4xx reply answers error: 502 JSON and the not-sent page', async () => {
         for (const status of [400, 401, 403, 422]) {
@@ -244,12 +272,13 @@ export default {
         const leaks = (lines) => {
           const bad = [KEY, BODY_MARKER, 'refused', VISITOR.name, 'Testpersoon', VISITOR.email, '1234 5678', 'Testonderwerp', 'Testbericht', 'victim', 'Jürgen', '198.51.100'];
           return lines.filter((l) => bad.some((b) => l.includes(b))
-            || !/^contact (ok|invalid|rate_limited|unavailable|error) (json|form) (en|nl)( (sparkpost=(\d{3}|timeout|network)|spam|too_fast))?$/.test(l));
+            || !/^contact (ok|invalid|rate_limited|unavailable|error) (json|form) (en|nl)( (sparkpost=(\d{3}|\d{3}-rejected|timeout|network)|spam|too_fast))?$/.test(l));
         };
         assert.equal(leaks([`contact error json en sparkpost=401 ${KEY}`, 'contact ok json en smtp=x y']).length, 2, 'leak check does not bite');
         assert.ok(logs.filter((l) => /sparkpost=(4|5)\d\d$/.test(l)).length >= 7, 'too few refusal log lines to judge');
         assert.ok(logs.some((l) => l.endsWith('sparkpost=timeout')) && logs.some((l) => l.endsWith('sparkpost=network')), 'timeout or network line missing');
         assert.ok(logs.some((l) => l === 'contact ok json en sparkpost=200'), 'ok line with status missing');
+        assert.ok(logs.filter((l) => l.endsWith('sparkpost=200-rejected')).length >= 9, 'too few rejected 2xx log lines');
         assert.deepEqual(leaks(logs), []);
       }],
     ];
