@@ -5,7 +5,7 @@ import { RESULT_PAGES, SERVICES } from '../../src/contact.js';
 import { assert, serve, request, readJson, fixturePublic, contentUrls, tmpDir, hasPlaceholderMarker, PLACEHOLDER_MARKER, ROOT, HOST } from '../lib.js';
 
 const silent = { info() {}, warn() {}, error() {} };
-const CONTENT_PAGES = 40;
+const CONTENT_PAGES = 42;
 const SOURCE_CASE = 'URL source is sitemap.xml';
 const MARKER_CASE = 'no placeholder marker, so the launch cases run';
 const LAUNCH_CASES = [

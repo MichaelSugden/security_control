@@ -307,6 +307,16 @@ html.lenis, html.lenis body { height: auto; }
   .hero__cue span { transform: none; opacity: .6; }
 }
 
+/* Strips of nine panels (Services hub): a smaller title so the longest word fits a collapsed panel */
+@media (min-width: 1200px) { .panels--dense .panel__title { font-size: clamp(.8125rem, .5rem + .5vw, 1.0625rem); } }
+
+/* Home: intro line above the charity logos */
+.supporters__intro { max-width: 40rem; margin: 0 auto clamp(20px, 3vw, 32px); text-align: center; font-size: .9375rem; line-height: 1.7; color: var(--label); }
+
+/* Home expertise list: service names link to their pages */
+.lines__link { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 4px; transition: text-decoration-color .3s; }
+.lines__link:hover { text-decoration-color: var(--accent); }
+
 /* Language switch as links: one file per language */
 .lang__btn { display: inline-flex; align-items: center; justify-content: center; }
 .lang__btn[aria-current="page"] { background: rgba(244, 244, 244, .1); color: var(--white); }
