@@ -2,7 +2,8 @@
 
 Static pages in `public/`, served by a small Node server that also handles the contact form, the
 old-URL redirects and the security headers. It runs on Replit (Autoscale deployment) with the source on
-GitHub. Form submissions are emailed through the info@ mailbox; nothing is stored.
+GitHub. Form submissions are emailed through SparkPost (or SMTP as the alternative) to the address in
+`MAIL_TO`; nothing is stored.
 
 ## Structure
 
@@ -14,7 +15,7 @@ src/site-index.js      scans public/ at start-up (page folders, inline code hash
 redirects.json         old URL to new URL (301) and removed URLs (410)
 public/                the generated site (do not edit by hand)
 test/run.js            test runner: suites, case counts, planted-defect proofs
-test/suites/           redirects, headers, pages, form
+test/suites/           redirects, headers, pages, form, sparkpost
 test/fixtures/         the original .htaccess redirect rows, used to check redirects.json
 .replit                Replit run and deployment settings
 .env.example           names of the environment variables (no values)
@@ -44,21 +45,48 @@ If a planted run passes, the proof is dead and `npm test` exits 1.
 
 ## Environment variables
 
-Set these as Replit Secrets (or in `.env` locally). Never commit values.
+Set these as Replit Secrets (or in `.env` locally). Never commit values. The form sends through SparkPost
+when `SPARKPOST_API_KEY` is set, otherwise through SMTP. With neither configured it answers `unavailable`.
+
+### Mail through SparkPost (the route in use)
+
+| Name | Required | Value |
+|---|---|---|
+| `SPARKPOST_API_KEY` | yes | API key with the permission "Transmissions: Read/Write" and nothing else |
+| `SPARKPOST_REGION` | no | `eu` for an EU account; anything else, or empty, means the US API |
+| `MAIL_FROM` | yes | sender on a domain verified in SparkPost, for example `Security Control website <website@securitycontrol.nl>` or `info@securitycontrol.nl` |
+| `MAIL_TO` | set it | `bkiepe@securitycontrol.nl`; when empty the code falls back to `info@securitycontrol.nl` |
+| `PORT` | no | port to listen on; default 3000 |
+| `TRUST_PROXY` | no | number of proxies in front of the app (default `1`), or `false`; the rate limit uses the address the last trusted proxy appended to `X-Forwarded-For` |
+
+- **Region:** if the SparkPost login is at app.sparkpost.com the account is US (leave `SPARKPOST_REGION`
+  empty); if it is at app.eu.sparkpost.com, set `eu`. A key from one region is refused by the other.
+- **Key:** in SparkPost, open API Keys, create a key, and grant only "Transmissions: Read/Write". The app
+  sends it in the `Authorization` header to `/api/v1/transmissions` and never logs it.
+- **Sending domain:** `securitycontrol.nl` must be added and verified under Sending Domains before the
+  first send. Verification needs a DKIM TXT record. That is a mail DNS record, so the client or their DNS
+  owner adds it at the DNS host; the web switch-over below never touches mail records.
+- Open and click tracking are off and the message is sent as transactional, so the plain-text body
+  arrives as written.
+- Each request has a 10 second limit. A refusal, a timeout or a network error answers `error` (the
+  not-sent page without JS). The log line names the outcome and `sparkpost=<HTTP status>`, `timeout` or
+  `network`, never the key, the visitor's data or SparkPost's reply.
+
+### Mail through SMTP (the alternative)
+
+Used only when `SPARKPOST_API_KEY` is empty. `MAIL_TO`, `PORT` and `TRUST_PROXY` work as above.
 
 | Name | Required | Meaning |
 |---|---|---|
-| `SMTP_HOST` | yes | SMTP server of the info@ mailbox |
+| `SMTP_HOST` | yes | SMTP server of the sending mailbox |
 | `SMTP_PORT` | yes | usually 465 (TLS) or 587 (STARTTLS) |
 | `SMTP_SECURE` | no | `true` for TLS on connect; default is `true` on port 465, otherwise `false` with STARTTLS required |
 | `SMTP_USER` | yes | mailbox login |
 | `SMTP_PASS` | yes | mailbox password |
 | `MAIL_FROM` | yes | sender, the mailbox itself, for example `Security Control website <info@securitycontrol.nl>` |
-| `MAIL_TO` | no | recipient; default `info@securitycontrol.nl` |
-| `PORT` | no | port to listen on; default 3000 |
-| `TRUST_PROXY` | no | number of proxies in front of the app (default `1`), or `false`; the rate limit uses the address the last trusted proxy appended to `X-Forwarded-For` |
 
-If any required SMTP name is missing, the start-up log names the missing variables (never their values).
+The start-up log names the route in use (and the SparkPost region), or the missing variables of the
+chosen route, never their values.
 
 ## The contact form
 
@@ -86,7 +114,8 @@ the honeypot `website`.
   to a new instance). Invalid and spam submissions do not count. The IP is the address the proxy appended
   to `X-Forwarded-For` (`TRUST_PROXY`, default 1 hop), never the leftmost one, which a visitor can set.
 - The mail goes from `MAIL_FROM` to `MAIL_TO` with Reply-To set to the visitor. The log line for each
-  submission holds only the outcome code, the reply type and the language.
+  submission holds only the outcome code, the reply type, the language and, on the SparkPost route, the
+  HTTP status.
 
 ## Rebuild `public/` from the generator
 
@@ -130,7 +159,7 @@ git push -u origin main
 
 1. In Replit, choose Create, then Import from GitHub, and pick the repository.
 2. Replit reads `.replit`: Node 22, run command `npm start`, port 3000 mapped to 80.
-3. Open Secrets (the padlock in Tools) and add the variables from the table above.
+3. Open Secrets (the padlock in Tools) and add the variables from the SparkPost table above.
 4. Press Run and check the preview: pages load, `/healthz` answers `ok`, and the response headers carry
    `X-Robots-Tag: noindex` (any host other than securitycontrol.nl is kept out of search engines).
 
@@ -144,6 +173,10 @@ git push -u origin main
    second connection (another network); it must still go through. If every visitor shares one limit,
    Replit has more than one proxy in front of the app: set `TRUST_PROXY` to that number and redeploy.
    Never set it higher than the real number of proxies, or a visitor can choose their own address.
+5. Mail check: send one real message through the EN form on the `.replit.app` URL. It must arrive in the
+   inbox of `bkiepe@securitycontrol.nl` with Reply-To set to the address typed in the form. If the page
+   says the message was not sent, the deployment log shows `sparkpost=<status>`: 401 or 403 points at the
+   key, its permission or the region; 400 or 422 usually means the `MAIL_FROM` domain is not verified.
 
 ### 4. Connect the custom domain
 
@@ -154,7 +187,7 @@ the records Replit gives (an A record and a TXT record for the bare host, and th
 
 1. One day ahead: lower the TTL of the web records (bare host A and `www`) to 300 seconds.
 2. Verify the site on the Replit URL first: every page, the 301s, the 404 page, and a real form send in EN
-   and NL that arrives in the info@ mailbox.
+   and NL that arrives at `bkiepe@securitycontrol.nl`.
 3. Change only the web records Replit gives: the A and TXT records for the bare host, and `www`.
 4. **Never touch MX, SPF, DKIM, DMARC or any other mail record.** Mail keeps running on the current host.
 5. Keep the WordPress site running untouched on its current host: it is the rollback target.

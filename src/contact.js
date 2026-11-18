@@ -1,5 +1,6 @@
 import express from 'express';
 import nodemailer from 'nodemailer';
+import addressparser from 'nodemailer/lib/addressparser';
 
 // Stable service values sent by the form in both languages; the labels are for the mail body.
 export const SERVICES = {
@@ -130,6 +131,99 @@ export function mailConfigFromEnv(env) {
   };
 }
 
+// SparkPost HTTP API settings from env; MAIL_FROM must be on a domain verified in SparkPost.
+export function sparkpostConfigFromEnv(env) {
+  const apiKey = String(env.SPARKPOST_API_KEY || '').trim();
+  const missing = ['SPARKPOST_API_KEY', 'MAIL_FROM'].filter((k) => !env[k] || !String(env[k]).trim());
+  if (missing.length) return { config: null, missing };
+  const region = String(env.SPARKPOST_REGION || '').trim().toLowerCase() === 'eu' ? 'eu' : 'us';
+  return {
+    missing: [],
+    config: {
+      sparkpost: {
+        apiKey,
+        region,
+        baseUrl: region === 'eu' ? 'https://api.eu.sparkpost.com' : 'https://api.sparkpost.com',
+        timeoutMs: 10000,
+      },
+      from: env.MAIL_FROM.trim(),
+      to: (env.MAIL_TO || '').trim() || 'info@securitycontrol.nl',
+    },
+  };
+}
+
+// SparkPost when SPARKPOST_API_KEY is set, otherwise SMTP; config is null when the form cannot send.
+export function mailRouteFromEnv(env) {
+  if (String(env.SPARKPOST_API_KEY || '').trim()) return { route: 'sparkpost', ...sparkpostConfigFromEnv(env) };
+  return { route: 'smtp', ...mailConfigFromEnv(env) };
+}
+
+// Display name as one header-safe phrase: a quoted string for printable ASCII, else RFC 2047 encoded words.
+export function headerPhrase(name) {
+  if (/^[\x20-\x7e]*$/.test(name)) return `"${name.replace(/[\\"]/g, (c) => `\\${c}`)}"`;
+  const words = [];
+  let chunk = '';
+  for (const ch of name) {
+    if (Buffer.byteLength(chunk + ch) > 45) { words.push(chunk); chunk = ''; }
+    chunk += ch;
+  }
+  if (chunk) words.push(chunk);
+  return words.map((w) => `=?UTF-8?B?${Buffer.from(w).toString('base64')}?=`).join(' ');
+}
+
+// SparkPost transmission built from the same mail as the SMTP route.
+export function buildTransmission(m) {
+  const sender = addressparser(m.from)[0] || { address: m.from };
+  return {
+    options: { transactional: true, open_tracking: false, click_tracking: false },
+    recipients: [{ address: { email: m.to } }],
+    content: {
+      from: sender.name ? { name: sender.name, email: sender.address } : sender.address,
+      reply_to: `${headerPhrase(m.replyTo.name)} <${m.replyTo.address}>`,
+      subject: m.subject,
+      text: m.text,
+    },
+  };
+}
+
+// Sends through the SparkPost API; resolves with the HTTP status, throws with a log-safe code.
+export function sparkpostSender({ apiKey, baseUrl, timeoutMs = 10000, fetch: fetchFn }) {
+  return {
+    async send(m) {
+      let res;
+      try {
+        res = await (fetchFn || globalThis.fetch)(`${baseUrl}/api/v1/transmissions`, {
+          method: 'POST',
+          headers: { Authorization: apiKey, 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify(buildTransmission(m)),
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+      } catch (err) {
+        const timeout = err && (err.name === 'TimeoutError' || err.name === 'AbortError');
+        throw Object.assign(new Error('sparkpost request failed'), { code: `sparkpost=${timeout ? 'timeout' : 'network'}` });
+      }
+      if (res.body) await res.body.cancel().catch(() => {});
+      if (res.status < 200 || res.status > 299) throw Object.assign(new Error('sparkpost refused'), { code: `sparkpost=${res.status}` });
+      return `sparkpost=${res.status}`;
+    },
+  };
+}
+
+// Sends through nodemailer; throws with a log-safe code.
+function smtpSender(transport) {
+  const transporter = nodemailer.createTransport(transport);
+  return {
+    async send(m) {
+      try {
+        await transporter.sendMail(m);
+      } catch (err) {
+        throw Object.assign(new Error('smtp send failed'), { code: `smtp=${String(err && err.code ? err.code : 'unknown').replace(/[^\w-]/g, '')}` });
+      }
+      return '';
+    },
+  };
+}
+
 export function buildMail(values, lang, { from, to }) {
   const label = SERVICES[values.service];
   const text = [
@@ -158,7 +252,7 @@ export function buildMail(values, lang, { from, to }) {
 // POST /api/contact. Logs carry outcome codes only.
 export function contactRouter({ mail, logger, minFillMs, rateLimit, now, sendTimeoutMs = 30000 }) {
   const router = express.Router();
-  const transporter = mail ? nodemailer.createTransport(mail.transport) : null;
+  const sender = !mail ? null : mail.sparkpost ? sparkpostSender(mail.sparkpost) : smtpSender(mail.transport);
   const limiter = createRateLimiter({ ...rateLimit, now });
 
   const reply = (req, res, lang, code, extra = {}) => {
@@ -199,7 +293,7 @@ export function contactRouter({ mail, logger, minFillMs, rateLimit, now, sendTim
       // Field errors first, so the page can show them even when sending is unavailable.
       const { values, fields } = validate(body);
       if (Object.keys(fields).length) return reply(req, res, lang, 'invalid', { fields });
-      if (!transporter) return reply(req, res, lang, 'unavailable');
+      if (!sender) return reply(req, res, lang, 'unavailable');
 
       const slot = limiter.take(req.ip || 'unknown');
       if (!slot.ok) {
@@ -208,19 +302,21 @@ export function contactRouter({ mail, logger, minFillMs, rateLimit, now, sendTim
       }
 
       let timer;
+      let sent;
       try {
-        await Promise.race([
-          transporter.sendMail(buildMail(values, lang, mail)),
+        sent = await Promise.race([
+          sender.send(buildMail(values, lang, mail)),
           new Promise((_, reject) => {
-            timer = setTimeout(() => reject(Object.assign(new Error('send timeout'), { code: 'ETIMEDOUT' })), sendTimeoutMs);
+            timer = setTimeout(() => reject(Object.assign(new Error('send timeout'), { code: 'timeout' })), sendTimeoutMs);
           }),
         ]);
       } catch (err) {
-        return reply(req, res, lang, 'error', { log: `smtp=${String(err && err.code ? err.code : 'unknown').replace(/[^\w-]/g, '')}` });
+        const code = /^(smtp|sparkpost)=[\w-]+$|^timeout$/.test(String(err && err.code)) ? err.code : 'unknown';
+        return reply(req, res, lang, 'error', { log: code });
       } finally {
         clearTimeout(timer);
       }
-      return reply(req, res, lang, 'ok');
+      return reply(req, res, lang, 'ok', { log: sent });
     },
   );
 

@@ -4,9 +4,10 @@ import redirects from './suites/redirects.js';
 import headers from './suites/headers.js';
 import pages from './suites/pages.js';
 import form from './suites/form.js';
+import sparkpost from './suites/sparkpost.js';
 import { cleanupTmp } from './lib.js';
 
-const SUITES = [redirects, headers, pages, form];
+const SUITES = [redirects, headers, pages, form, sparkpost];
 const CASE_TIMEOUT_MS = 15000;
 const TOTAL_TIMEOUT_MS = 300000;
 
