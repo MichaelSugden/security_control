@@ -31,7 +31,7 @@ const headerBlock = (raw) => raw.split('\r\n\r\n')[0];
 
 export default {
   name: 'form',
-  declared: 44,
+  declared: 45,
   plantedMustFail: [
     'fill time under 3 s counts as spam: ok, no mail',
     'rate limit: the 6th send from one IP in an hour is refused',
@@ -113,6 +113,15 @@ export default {
         assert.ok(ok.sent.at(-1).data.text.includes('Page language: NL'));
         assert.ok(ok.sent.at(-1).data.text.includes('Service: Training Services'));
       }],
+      ['service other is accepted in EN and NL, mail body label Other', async () => {
+        const before = count();
+        for (const lang of ['en', 'nl']) {
+          const r = await send({ lang, ...VISITOR, service: 'other' });
+          assert.deepEqual(JSON.parse(r.text), { ok: true }, lang);
+          assert.ok(ok.sent.at(-1).data.text.includes('Service: Other'), `${lang} body lacks Service: Other`);
+        }
+        assert.equal(count(), before + 2);
+      }],
       ['valid EN, no-JS: 303 to the thank-you page', async () => {
         const before = count();
         const r = await send({ lang: 'en', ...VISITOR }, { json: false });
@@ -144,7 +153,7 @@ export default {
       ['phone too long', () => expectInvalid({ phone: '1'.repeat(51) }, { phone: 'too_long' })],
       ['service missing', () => expectInvalid({ service: '' }, { service: 'missing' })],
       ['service with an old translated label is refused', () => expectInvalid({ service: 'Specialised Security' }, { service: 'invalid' })],
-      ['service not in the list', () => expectInvalid({ service: 'other' }, { service: 'invalid' })],
+      ['service not in the list', () => expectInvalid({ service: 'consultancy' }, { service: 'invalid' })],
       ['subject too long', () => expectInvalid({ subject: 's'.repeat(201) }, { subject: 'too_long' })],
       ['message missing', () => expectInvalid({ message: ' \r\n ' }, { message: 'missing' })],
       ['message over 5,000 characters', () => expectInvalid({ message: 'm'.repeat(5001) }, { message: 'too_long' })],

@@ -22,12 +22,12 @@ async function runSuite(suite, { planted = false, declared = suite.declared, qui
   const built = await suite.build({ planted, ...opts });
   const failed = [];
   let passed = 0;
-  let skipped = 0;
+  const skipped = [];
   try {
     for (const [name, fn] of built.cases) {
       try {
         const out = await withTimeout(Promise.resolve().then(fn), CASE_TIMEOUT_MS, name);
-        if (out === 'skip') skipped += 1;
+        if (out === 'skip') skipped.push(name);
         passed += 1;
         if (!quiet && out === 'skip') console.log(`  SKIP ${name} (placeholder public/)`);
       } catch (err) {
@@ -49,8 +49,8 @@ console.log('Suites');
 for (const suite of SUITES) {
   const r = await runSuite(suite);
   totalCases += r.ran;
-  const skipNote = r.skipped ? `, ${r.skipped} skipped` : '';
-  console.log(`suite ${suite.name}: ${r.ran} cases (declared ${suite.declared}), ${r.passed - r.skipped} passed${skipNote}, ${r.failed.length} failed${r.countOk ? '' : '  COUNT MISMATCH'}`);
+  const skipNote = r.skipped.length ? `, ${r.skipped.length} skipped` : '';
+  console.log(`suite ${suite.name}: ${r.ran} cases (declared ${suite.declared}), ${r.passed - r.skipped.length} passed${skipNote}, ${r.failed.length} failed${r.countOk ? '' : '  COUNT MISMATCH'}`);
   if (!r.ok) bad += 1;
 }
 
@@ -68,9 +68,11 @@ for (const suite of SUITES) {
   for (const extra of suite.extraProofs || []) {
     proofCount += 1;
     const r = await runSuite(suite, { quiet: true, opts: extra.opts });
-    const missing = extra.mustFail.filter((n) => !r.failed.includes(n));
+    const mustSkip = extra.mustSkip || [];
+    const missing = [...extra.mustFail.filter((n) => !r.failed.includes(n)), ...mustSkip.filter((n) => !r.skipped.includes(n)).map((n) => `skip of ${n}`)];
     const held = !r.ok && missing.length === 0;
-    console.log(`proof ${extra.label}: ${r.ok ? 'PASSED (proof dead)' : `failed ${r.failed.length} cases`}; expected failures seen ${extra.mustFail.length - missing.length}/${extra.mustFail.length}${held ? '' : `  MISSING: ${missing.join(' | ')}`}`);
+    const skipNote = mustSkip.length ? `; expected skips seen ${mustSkip.filter((n) => r.skipped.includes(n)).length}/${mustSkip.length}` : '';
+    console.log(`proof ${extra.label}: ${r.ok ? 'PASSED (proof dead)' : `failed ${r.failed.length} cases`}; expected failures seen ${extra.mustFail.filter((n) => r.failed.includes(n)).length}/${extra.mustFail.length}${skipNote}${held ? '' : `  MISSING: ${missing.join(' | ')}`}`);
     if (held) proofs += 1; else bad += 1;
   }
 }

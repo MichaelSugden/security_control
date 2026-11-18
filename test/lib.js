@@ -10,7 +10,8 @@ export { assert };
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const PUBLIC = path.join(ROOT, 'public');
 export const HOST = 'securitycontrol.nl';
-export const PLACEHOLDER = fs.existsSync(path.join(ROOT, '.placeholder-public'));
+export const PLACEHOLDER_MARKER = '.placeholder-public';
+export const hasPlaceholderMarker = (root = ROOT) => fs.existsSync(path.join(root, PLACEHOLDER_MARKER));
 export const readJson = (rel) => JSON.parse(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
 
 // Starts a handler on a free port.

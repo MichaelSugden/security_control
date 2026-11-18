@@ -178,6 +178,7 @@
 
     /* Gentle crossfade as each section arrives */
     $$('[data-fade]').forEach(function (el) {
+      if (inView(el)) return;
       g.fromTo(el, { opacity: .2 }, { opacity: 1, ease: 'none', scrollTrigger: { trigger: el, start: 'top 98%', end: 'top 62%', scrub: true } });
     });
 
@@ -241,4 +242,50 @@
     Promise.race([fonts, timeout]).then(initMotion);
   }
   if (d.readyState === 'loading') d.addEventListener('DOMContentLoaded', start); else start();
+})();
+
+/* Contact form: posts URL-encoded to /api/contact, reads the JSON reply whatever the status, shows messages in the page language */
+(function () {
+  'use strict';
+  var form = document.querySelector('[data-contact-form]');
+  if (!form) return;
+  var msgs = JSON.parse(document.getElementById('cform-msgs').textContent);
+  var status = document.querySelector('[data-form-status]');
+  var busy = false;
+  form.setAttribute('novalidate', '');
+  var say = function (key) { status.textContent = msgs[key] || msgs['form.error']; };
+  var clear = function () {
+    Array.prototype.forEach.call(form.querySelectorAll('[aria-invalid]'), function (f) { f.removeAttribute('aria-invalid'); });
+    Array.prototype.forEach.call(form.querySelectorAll('[data-err]'), function (p) { p.textContent = ''; p.hidden = true; });
+  };
+  var mark = function (fields) {
+    var first = null;
+    Object.keys(fields).forEach(function (name) {
+      var f = form.elements[name];
+      if (!f || !f.id) return;
+      var err = document.getElementById(f.id + '-err');
+      f.setAttribute('aria-invalid', 'true');
+      if (err) { err.textContent = msgs['field.' + name + '.' + fields[name]] || msgs['field.other']; err.hidden = false; }
+      if (!first) first = f;
+    });
+    if (first) first.focus();
+  };
+  form.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    if (busy) return;
+    busy = true;
+    clear();
+    form.elements.elapsed.value = String(Math.round(performance.now()));
+    say('form.sending');
+    fetch(form.action, { method: 'POST', headers: { 'Accept': 'application/json' }, body: new URLSearchParams(new FormData(form)) })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data && data.ok === true) { form.reset(); say('form.success'); return; }
+        var code = data && data.code;
+        if (code === 'invalid' && data.fields) mark(data.fields);
+        say(['invalid', 'rate_limited', 'unavailable', 'error'].indexOf(code) !== -1 ? 'form.' + code : 'form.error');
+      })
+      .catch(function () { say('form.error'); })
+      .then(function () { busy = false; });
+  });
 })();

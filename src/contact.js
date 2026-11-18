@@ -6,6 +6,7 @@ export const SERVICES = {
   specialised: 'Specialised Security',
   advanced: 'Advanced Security',
   training: 'Training Services',
+  other: 'Other',
 };
 
 export const LIMITS = { name: 200, email: 254, phone: 50, subject: 200, message: 5000 };
