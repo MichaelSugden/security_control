@@ -39,14 +39,15 @@ const hang = (init) => new Promise((resolve, reject) => {
   if (init.signal) init.signal.addEventListener('abort', () => { clearTimeout(t); reject(init.signal.reason); });
 });
 
-// Planted defects between the app and SparkPost: US host for EU, no key, tracking on, raw Reply-To, refusals read as 200, no time limit.
+// Planted defects between the app and SparkPost: EU and US hosts swapped, no key, tracking on, raw Reply-To, refusals read as 200, no time limit.
 const planted = (fn) => async (url, init) => {
   const body = JSON.parse(init.body);
   body.options.open_tracking = true;
   body.content.reply_to = body.content.reply_to.replace(/^"((?:[^"\\]|\\.)*)"/, (m, n) => n.replace(/\\(.)/g, '$1'));
   const headers = { ...init.headers };
   delete headers.Authorization;
-  const res = await fn(url.replace('api.eu.sparkpost.com', 'api.sparkpost.com'), { ...init, headers, body: JSON.stringify(body), signal: undefined });
+  const swapped = url.includes('api.eu.sparkpost.com') ? url.replace('api.eu.sparkpost.com', 'api.sparkpost.com') : url.replace('api.sparkpost.com', 'api.eu.sparkpost.com');
+  const res = await fn(swapped, { ...init, headers, body: JSON.stringify(body), signal: undefined });
   return res.status >= 400 ? new Response('{}', { status: 200 }) : res;
 };
 
@@ -54,7 +55,7 @@ export default {
   name: 'sparkpost',
   declared: 15,
   plantedMustFail: [
-    'request URL per region: eu to the EU host, anything else to the US host',
+    'request URL per region: EU by default, the US host only for an explicit us',
     'POST with the key in Authorization and a JSON body',
     'Reply-To is the visitor: one address with quotes, angle brackets, commas and a backslash in the name',
     'options: transactional, open and click tracking off',
@@ -80,8 +81,10 @@ export default {
       return { srv, mock, config };
     };
     const eu = await make({ SPARKPOST_REGION: 'eu' });
-    const us = await make({ SPARKPOST_REGION: '' });
+    const us = await make({ SPARKPOST_REGION: ' US ' });
     const other = await make({ SPARKPOST_REGION: 'us-west' });
+    const unset = await make({});
+    const blank = await make({ SPARKPOST_REGION: '   ' });
     const quick = await make({ SPARKPOST_REGION: 'EU ' }, { timeoutMs: 300 });
 
     let ipSeq = 0;
@@ -97,8 +100,9 @@ export default {
     });
 
     const cases = [
-      ['request URL per region: eu to the EU host, anything else to the US host', async () => {
-        for (const [app, host] of [[eu, 'api.eu.sparkpost.com'], [quick, 'api.eu.sparkpost.com'], [us, 'api.sparkpost.com'], [other, 'api.sparkpost.com']]) {
+      ['request URL per region: EU by default, the US host only for an explicit us', async () => {
+        const EU = 'api.eu.sparkpost.com';
+        for (const [app, host] of [[unset, EU], [blank, EU], [eu, EU], [quick, EU], [other, EU], [us, 'api.sparkpost.com']]) {
           await post(app.srv, {});
           assert.equal(app.mock.calls.at(-1).url, `https://${host}/api/v1/transmissions`);
         }
@@ -202,6 +206,9 @@ export default {
         assert.equal(sp.route, 'sparkpost');
         assert.equal(sp.config.to, MAIL_TO);
         assert.equal(sp.config.sparkpost.timeoutMs, 10000);
+        assert.equal(sp.config.sparkpost.region, 'eu', 'unset region is not EU');
+        assert.equal(mailRouteFromEnv({ ...env, SPARKPOST_REGION: 'Us' }).config.sparkpost.region, 'us');
+        assert.equal(mailRouteFromEnv({ ...env, SPARKPOST_REGION: 'usa' }).config.sparkpost.region, 'eu');
         assert.deepEqual(mailRouteFromEnv({ SPARKPOST_API_KEY: KEY }), { route: 'sparkpost', config: null, missing: ['MAIL_FROM'] });
         assert.equal(mailRouteFromEnv({ SPARKPOST_API_KEY: KEY, MAIL_FROM }).config.to, 'info@securitycontrol.nl');
         const smtpEnv = { SMTP_HOST: 'smtp.example.org', SMTP_PORT: '465', SMTP_USER: 'u', SMTP_PASS: 'p', MAIL_FROM };
@@ -237,7 +244,7 @@ export default {
         const leaks = (lines) => {
           const bad = [KEY, BODY_MARKER, 'refused', VISITOR.name, 'Testpersoon', VISITOR.email, '1234 5678', 'Testonderwerp', 'Testbericht', 'victim', 'Jürgen', '198.51.100'];
           return lines.filter((l) => bad.some((b) => l.includes(b))
-            || !/^contact (ok|invalid|rate_limited|unavailable|error) (json|form) (en|nl)( (sparkpost=(\d{3}|timeout|network)|spam))?$/.test(l));
+            || !/^contact (ok|invalid|rate_limited|unavailable|error) (json|form) (en|nl)( (sparkpost=(\d{3}|timeout|network)|spam|too_fast))?$/.test(l));
         };
         assert.equal(leaks([`contact error json en sparkpost=401 ${KEY}`, 'contact ok json en smtp=x y']).length, 2, 'leak check does not bite');
         assert.ok(logs.filter((l) => /sparkpost=(4|5)\d\d$/.test(l)).length >= 7, 'too few refusal log lines to judge');

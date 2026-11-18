@@ -53,14 +53,16 @@ when `SPARKPOST_API_KEY` is set, otherwise through SMTP. With neither configured
 | Name | Required | Value |
 |---|---|---|
 | `SPARKPOST_API_KEY` | yes | API key with the permission "Transmissions: Read/Write" and nothing else |
-| `SPARKPOST_REGION` | no | `eu` for an EU account; anything else, or empty, means the US API |
+| `SPARKPOST_REGION` | set it | `eu` (the client's account is EU); EU is also the default, and only `us` selects the US API |
 | `MAIL_FROM` | yes | sender on a domain verified in SparkPost, for example `Security Control website <website@securitycontrol.nl>` or `info@securitycontrol.nl` |
 | `MAIL_TO` | set it | `bkiepe@securitycontrol.nl`; when empty the code falls back to `info@securitycontrol.nl` |
 | `PORT` | no | port to listen on; default 3000 |
-| `TRUST_PROXY` | no | number of proxies in front of the app (default `1`), or `false`; the rate limit uses the address the last trusted proxy appended to `X-Forwarded-For` |
+| `TRUST_PROXY` | no | number of proxies in front of the app (default `1`), or `false`; the rate limit uses the address the last trusted proxy appended to `X-Forwarded-For`, the https fix the `X-Forwarded-Proto` entry it set |
 
-- **Region:** if the SparkPost login is at app.sparkpost.com the account is US (leave `SPARKPOST_REGION`
-  empty); if it is at app.eu.sparkpost.com, set `eu`. A key from one region is refused by the other.
+- **Region:** the client's account is EU (login at app.eu.sparkpost.com), so set `eu`. An empty or unset
+  value also means EU (`https://api.eu.sparkpost.com`); only `us` must be set explicitly, for an account
+  whose login is at app.sparkpost.com (`https://api.sparkpost.com`). A key from one region is refused by
+  the other.
 - **Key:** in SparkPost, open API Keys, create a key, and grant only "Transmissions: Read/Write". The app
   sends it in the `Authorization` header to `/api/v1/transmissions` and never logs it.
 - **Sending domain:** `securitycontrol.nl` must be added and verified under Sending Domains before the
@@ -107,11 +109,17 @@ the honeypot `website`.
   the JSON whatever the status code.
 - Without that header the server answers 303 to `/en/contact-us/thank-you/` or `/nl/contact/bedankt/` on
   success, and to `/en/contact-us/not-sent/` or `/nl/contact/niet-verzonden/` on any failure.
-- Spam (a filled honeypot, or an `elapsed` under 3000) gets the success reply but no mail. An `elapsed`
-  that is not a whole number counts as spam. A missing `elapsed` (no JS) is not treated as spam. The
-  time is measured on the page alone, so the visitor's device clock does not matter.
+- Order of checks: honeypot, then the fields, then the fill time, then sending.
+  - A filled honeypot gets the success reply but no mail. It is the only silent success: a real visitor
+    cannot fill it.
+  - Field errors come next, so an empty or wrong form always gets `invalid` with its `fields`, however fast
+    it was sent.
+  - A valid form sent within 3 seconds of the page loading (`elapsed` under 3000, or not a whole number)
+    gets `error` (the not-sent page without JS) and no mail. The page keeps the fields, and the log line
+    ends in `too_fast`. A missing `elapsed` (no JS) passes. The time is measured on the page alone, so the
+    visitor's device clock does not matter.
 - Rate limit: 5 sent messages per IP per hour, kept in memory (it resets when the app restarts or scales
-  to a new instance). Invalid and spam submissions do not count. The IP is the address the proxy appended
+  to a new instance). Invalid, too-fast and honeypot submissions do not count. The IP is the address the proxy appended
   to `X-Forwarded-For` (`TRUST_PROXY`, default 1 hop), never the leftmost one, which a visitor can set.
 - The mail goes from `MAIL_FROM` to `MAIL_TO` with Reply-To set to the visitor. The log line for each
   submission holds only the outcome code, the reply type, the language and, on the SparkPost route, the
@@ -131,18 +139,21 @@ in the project folder), not edited here.
 The CSP hashes for inline scripts, style blocks and style attributes are computed from `public/` when the
 server starts, so a regenerated page needs no header change. Third-party hosts are not allowed by the CSP.
 
-Asset cache: files outside HTML are sent with `max-age` of one year. Their names carry no version, so the
-generator should add a version to the CSS and JS links (for example `site.css?v=<hash>`) whenever they
-change, or returning visitors keep the old file.
+Asset cache: files outside HTML are sent with `max-age` of one year. The generator adds `?v=<hash>` (the
+start of the file's SHA-256) to every CSS, JS, font and image URL, the favicon, share images and JSON-LD
+included, so a changed file gets a new URL and returning visitors never keep a stale copy.
 
 ## Redirects
 
 `redirects.json` holds 40 old paths that answer one 301 to their new page (the v1 URL map plus the 2020
 legacy paths) and 6 paths that answer 410 with the NL 404 page body (`goneLang`: they all come from the
 Dutch 2020 site, the root-level ones included). Each path matches with or without its
-trailing slash, and the query string is kept. In the same single hop the server also moves `www.` to the
-bare host, `http` to `https` (when `x-forwarded-proto` is `http`), `/` to `/nl/` and a folder URL without
-its slash to the slash form. Keep the rows for at least 12 months.
+trailing slash, and the query string is kept. In the same single hop the server also moves
+`www.securitycontrol.nl` to the bare host, `http` to `https`, `/` to `/nl/` and a folder URL without its
+slash to the slash form. The host and scheme fixes apply only to `securitycontrol.nl` and
+`www.securitycontrol.nl` and always point at `https://securitycontrol.nl`; any other host (the `.replit.app`
+URL included) gets only the path fixes, so a forged `Host` can never choose the redirect target. Keep the
+rows for at least 12 months.
 
 ## Deploy
 
@@ -173,6 +184,11 @@ git push -u origin main
    second connection (another network); it must still go through. If every visitor shares one limit,
    Replit has more than one proxy in front of the app: set `TRUST_PROXY` to that number and redeploy.
    Never set it higher than the real number of proxies, or a visitor can choose their own address.
+   The scheme is read the same way: `X-Forwarded-Proto` counts from the right by `TRUST_PROXY`, so with
+   the default 1 hop the last entry (the one Replit's proxy set) decides, and `http, https` is https. With
+   `TRUST_PROXY=false` the header is ignored and the app never redirects to https itself. After the DNS
+   switch (step 5.6), check that `curl -sI http://securitycontrol.nl/en/` answers one 301 to
+   `https://securitycontrol.nl/en/` and that the https URL answers 200, with no loop.
 5. Mail check: send one real message through the EN form on the `.replit.app` URL. It must arrive in the
    inbox of `bkiepe@securitycontrol.nl` with Reply-To set to the address typed in the form. If the page
    says the message was not sent, the deployment log shows `sparkpost=<status>`: 401 or 403 points at the

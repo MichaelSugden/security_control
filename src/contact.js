@@ -64,10 +64,14 @@ export function validate(body) {
   return { values, fields };
 }
 
-// Honeypot filled, or a fill time (elapsed ms, measured on the page) under the minimum. No elapsed (no JS) is not spam.
-export function isSpam(body, minFillMs) {
+// Honeypot filled (or not a string): a bot, answered with a silent success.
+export function isHoneypot(body) {
   if (body.website !== undefined && typeof body.website !== 'string') return true;
-  if (typeof body.website === 'string' && body.website.trim() !== '') return true;
+  return typeof body.website === 'string' && body.website.trim() !== '';
+}
+
+// Fill time (elapsed ms, measured on the page) under the minimum, or not a whole number. No elapsed (no JS) passes.
+export function isTooFast(body, minFillMs) {
   if (body.elapsed === undefined || body.elapsed === '') return false;
   const elapsed = typeof body.elapsed === 'string' && /^\d+$/.test(body.elapsed.trim()) ? Number(body.elapsed) : NaN;
   return !Number.isFinite(elapsed) || elapsed < minFillMs;
@@ -136,7 +140,8 @@ export function sparkpostConfigFromEnv(env) {
   const apiKey = String(env.SPARKPOST_API_KEY || '').trim();
   const missing = ['SPARKPOST_API_KEY', 'MAIL_FROM'].filter((k) => !env[k] || !String(env[k]).trim());
   if (missing.length) return { config: null, missing };
-  const region = String(env.SPARKPOST_REGION || '').trim().toLowerCase() === 'eu' ? 'eu' : 'us';
+  // EU is the default (the client's account); only an explicit "us" selects the US API.
+  const region = String(env.SPARKPOST_REGION || '').trim().toLowerCase() === 'us' ? 'us' : 'eu';
   return {
     missing: [],
     config: {
@@ -288,11 +293,11 @@ export function contactRouter({ mail, logger, minFillMs, rateLimit, now, sendTim
       const body = req.body && typeof req.body === 'object' ? req.body : {};
       const lang = body.lang === 'nl' ? 'nl' : 'en';
 
-      if (isSpam(body, minFillMs)) return reply(req, res, lang, 'ok', { log: 'spam' });
-
-      // Field errors first, so the page can show them even when sending is unavailable.
+      // Order: honeypot (silent success), field errors, fill time (an error the visitor sees), then sending.
+      if (isHoneypot(body)) return reply(req, res, lang, 'ok', { log: 'spam' });
       const { values, fields } = validate(body);
       if (Object.keys(fields).length) return reply(req, res, lang, 'invalid', { fields });
+      if (isTooFast(body, minFillMs)) return reply(req, res, lang, 'error', { log: 'too_fast' });
       if (!sender) return reply(req, res, lang, 'unavailable');
 
       const slot = limiter.take(req.ip || 'unknown');

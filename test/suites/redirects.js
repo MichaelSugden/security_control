@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { createApp } from '../../src/app.js';
+import { createApp, forwardedProto } from '../../src/app.js';
 import { assert, serve, request, readJson, fixturePublic, PUBLIC, ROOT, HOST } from '../lib.js';
 
 const silent = { info() {}, warn() {}, error() {} };
@@ -37,7 +37,7 @@ const Q = '?utm_source=test&a=1';
 
 export default {
   name: 'redirects',
-  declared: 3 + 40 + 6 + 5,
+  declared: 3 + 40 + 6 + 8,
   plantedMustFail: [
     'data: redirects.json matches the .htaccess rows',
     'data: floor of 40 redirects and 6 gone paths',
@@ -131,6 +131,34 @@ export default {
         assert.equal(r.headers.location, `https://${HOST}/nl/diensten/brandwacht/${Q}`);
         const next = await get(`/nl/diensten/brandwacht/${Q}`, { 'x-forwarded-proto': 'https' });
         assert.equal(next.status, 200);
+      }],
+      ['a foreign host gets no host or scheme redirect, only the path fix', async () => {
+        for (const host of ['www.evil.example', 'evil.example', `www.${HOST}.evil.example`, `evil.example.www.${HOST}`]) {
+          const a = await get('/en/faq/', { host, 'x-forwarded-proto': 'http' });
+          assert.equal(a.status, 200, `${host} status`);
+          const b = await get(`/en/faq${Q}`, { host, 'x-forwarded-proto': 'http' });
+          assert.equal(b.status, 301, `${host} slash fix`);
+          assert.equal(b.headers.location, `/en/faq/${Q}`, `${host} location`);
+        }
+      }],
+      ['x-forwarded-proto: the entry the one trusted hop set (the last) decides', async () => {
+        const a = await get('/en/', { 'x-forwarded-proto': 'http, https' });
+        assert.equal(a.status, 200, 'http, https redirected');
+        const b = await get('/en/', { 'x-forwarded-proto': 'https, http' });
+        assert.equal(b.status, 301);
+        assert.equal(b.headers.location, `https://${HOST}/en/`);
+        const c = await get('/en/faq/', { host: `www.${HOST}`, 'x-forwarded-proto': 'http, https' });
+        assert.equal(c.headers.location, `https://${HOST}/en/faq/`);
+      }],
+      ['forwardedProto follows TRUST_PROXY: false ignores it, N hops read the Nth entry from the right', () => {
+        const req = (v) => ({ get: (h) => (h.toLowerCase() === 'x-forwarded-proto' ? v : undefined) });
+        assert.equal(forwardedProto(req('http, https'), 1), 'https');
+        assert.equal(forwardedProto(req(' HTTP '), 1), 'http');
+        assert.equal(forwardedProto(req('http, https'), false), '');
+        assert.equal(forwardedProto(req('http, https'), 0), '');
+        assert.equal(forwardedProto(req('http, https'), 2), 'http');
+        assert.equal(forwardedProto(req('https'), 3), 'https');
+        assert.equal(forwardedProto(req(undefined), 1), '');
       }],
       ['no chain: http and www on the root end in one hop at /nl/', async () => {
         const r = await get('/', { host: `www.${HOST}`, 'x-forwarded-proto': 'http' });

@@ -14,6 +14,24 @@ const VISITOR = {
   message: 'Testbericht met twee regels.\r\nTweede regel.',
 };
 
+// Old order, planted: a fill time under 3 s answered ok before validation (silent success, no mail).
+const TOO_FAST = (body) => body && typeof body.elapsed === 'string' && body.elapsed !== '' && !(/^\d+$/.test(body.elapsed) && Number(body.elapsed) >= 3000);
+function spamFirst(app) {
+  return (req, res) => {
+    res.json = function json(obj) {
+      const proto = Object.getPrototypeOf(this);
+      if (TOO_FAST(this.req.body)) return proto.json.call(this.status(200), { ok: true });
+      return proto.json.call(this, obj);
+    };
+    res.redirect = function redirect(status, url) {
+      const proto = Object.getPrototypeOf(this);
+      if (TOO_FAST(this.req.body)) return proto.redirect.call(this, 303, (this.req.body.lang === 'nl' ? RESULT_PAGES.nl : RESULT_PAGES.en).ok);
+      return proto.redirect.call(this, status, url);
+    };
+    app(req, res);
+  };
+}
+
 // Planted defect: any form reply becomes "unavailable", as when the mail check ran before validation.
 function mailCheckFirst(app) {
   return (req, res) => {
@@ -31,9 +49,11 @@ const headerBlock = (raw) => raw.split('\r\n\r\n')[0];
 
 export default {
   name: 'form',
-  declared: 45,
+  declared: 47,
   plantedMustFail: [
-    'fill time under 3 s counts as spam: ok, no mail',
+    'fill time under 3 s answers error, the not-sent page without JS, no mail',
+    'an empty form under 3 s gets invalid with every field error',
+    'a field error under 3 s gets invalid, not error',
     'rate limit: the 6th send from one IP in an hour is refused',
     'honeypot filled: ok, no mail',
     'elapsed decides the fill time, not the device clock',
@@ -58,6 +78,8 @@ export default {
     // Own server for the proxy case, so its proof does not lean on the planted rate limit.
     const proxied = await make({ transport: ok.transport, from: MAIL_FROM, to: MAIL_TO }, { trustProxy: planted ? true : trustProxyFromEnv({}) });
     const failing = await make({ transport: mockTransport({ fail: true }).transport, from: MAIL_FROM, to: MAIL_TO });
+    // Own server for the order cases, so its proof does not lean on the planted fill time.
+    const early = planted ? await serve(spamFirst(createApp({ publicDir: fx.dir, redirects, logger, now, mail: { transport: ok.transport, from: MAIL_FROM, to: MAIL_TO } }))) : await make({ transport: ok.transport, from: MAIL_FROM, to: MAIL_TO });
     const unconfigured = planted ? await serve(mailCheckFirst(createApp({ publicDir: fx.dir, redirects, logger, now, mail: null }))) : await make(null);
 
     let ipSeq = 0;
@@ -185,15 +207,33 @@ export default {
         assert.deepEqual(JSON.parse(r.text), { ok: true });
         const n = await send({ lang: 'nl', ...VISITOR, website: 'x' }, { json: false });
         assert.equal(n.headers.location, '/nl/contact/bedankt/');
+        const empty = await post(main, { lang: 'en', website: 'x', elapsed: '200' });
+        assert.deepEqual(JSON.parse(empty.text), { ok: true }, 'the honeypot is checked before the fields');
         assert.equal(count(), before, 'mail sent for a honeypot hit');
       }],
-      ['fill time under 3 s counts as spam: ok, no mail', async () => {
+      ['fill time under 3 s answers error, the not-sent page without JS, no mail', async () => {
         const before = count();
         const r = await send({ lang: 'en', ...VISITOR, elapsed: '2999' });
-        assert.deepEqual(JSON.parse(r.text), { ok: true });
-        const n = await send({ lang: 'en', ...VISITOR, elapsed: '500' }, { json: false });
-        assert.equal(n.headers.location, '/en/contact-us/thank-you/');
+        assert.equal(r.status, 502);
+        assert.deepEqual(JSON.parse(r.text), { ok: false, code: 'error' });
+        const n = await send({ lang: 'nl', ...VISITOR, elapsed: '500' }, { json: false });
+        assert.equal(n.status, 303);
+        assert.equal(n.headers.location, '/nl/contact/niet-verzonden/');
         assert.equal(count(), before, 'mail sent for a too-fast fill');
+        assert.ok(logs.includes('contact error json en too_fast') && logs.includes('contact error form nl too_fast'), 'too_fast log lines missing');
+      }],
+      ['an empty form under 3 s gets invalid with every field error', async () => {
+        const r = await post(early, { lang: 'en', elapsed: '300' });
+        assert.equal(r.status, 422);
+        assert.deepEqual(JSON.parse(r.text), { ok: false, code: 'invalid', fields: { name: 'missing', email: 'missing', service: 'missing', message: 'missing' } });
+        const n = await post(early, { lang: 'nl', elapsed: '300' }, { json: false });
+        assert.equal(n.headers.location, '/nl/contact/niet-verzonden/');
+      }],
+      ['a field error under 3 s gets invalid, not error', async () => {
+        const before = count();
+        const r = await post(early, { lang: 'en', ...VISITOR, email: 'jan@', elapsed: '404' });
+        assert.deepEqual(JSON.parse(r.text), { ok: false, code: 'invalid', fields: { email: 'invalid' } });
+        assert.equal(count(), before);
       }],
       ['fill time of exactly 3 s sends', async () => {
         const before = count();
@@ -205,14 +245,14 @@ export default {
         await send({ lang: 'en', ...VISITOR, ts: String(clock + 3600000), elapsed: '20000' });
         assert.equal(count(), before + 1, 'a device clock far ahead blocked a real message');
         const r = await send({ lang: 'en', ...VISITOR, ts: String(clock - 3600000), elapsed: '800' });
-        assert.deepEqual(JSON.parse(r.text), { ok: true });
+        assert.deepEqual(JSON.parse(r.text), { ok: false, code: 'error' });
         assert.equal(count(), before + 1, 'a 0.8 s fill was sent');
       }],
-      ['a non-numeric or negative elapsed counts as spam', async () => {
+      ['a non-numeric or negative elapsed counts as too fast: error, no mail', async () => {
         const before = count();
         for (const elapsed of ['abc', '-5000', '1e9', '12.5']) {
           const r = await send({ lang: 'en', ...VISITOR, elapsed });
-          assert.deepEqual(JSON.parse(r.text), { ok: true }, elapsed);
+          assert.deepEqual(JSON.parse(r.text), { ok: false, code: 'error' }, elapsed);
         }
         assert.equal(count(), before, 'mail sent for a malformed elapsed');
       }],
@@ -252,9 +292,10 @@ export default {
         assert.equal(trustProxyFromEnv({ TRUST_PROXY: 'false' }), false);
         assert.equal(trustProxyFromEnv({ TRUST_PROXY: 'true' }), 1);
       }],
-      ['invalid and spam submissions do not use up the rate limit', async () => {
+      ['invalid, too-fast and honeypot submissions do not use up the rate limit', async () => {
         const ip = '203.0.113.9';
         for (let i = 0; i < 6; i += 1) await send({ lang: 'en', ...VISITOR, email: '' }, { ip });
+        for (let i = 0; i < 6; i += 1) await send({ lang: 'en', ...VISITOR, elapsed: '100' }, { ip });
         for (let i = 0; i < 6; i += 1) await send({ lang: 'en', ...VISITOR, website: 'x' }, { ip });
         assert.equal((await send({ lang: 'en', ...VISITOR }, { ip })).status, 200);
       }],
@@ -349,6 +390,6 @@ export default {
       }],
     ];
 
-    return { cases, close: async () => { await proxied.close(); await main.close(); await failing.close(); await unconfigured.close(); } };
+    return { cases, close: async () => { await proxied.close(); await main.close(); await failing.close(); await unconfigured.close(); await early.close(); } };
   },
 };

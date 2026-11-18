@@ -118,9 +118,6 @@
     });
   });
 
-  /* Static contact form: the browser checks the required fields; nothing is sent until a handler exists */
-  $$('[data-static-form]').forEach(function (f) { f.addEventListener('submit', function (ev) { ev.preventDefault(); }); });
-
   /* Scroll motion: Lenis smooth scroll plus GSAP ScrollTrigger; skipped for reduced motion or missing libraries */
   function initMotion() {
     var g = w.gsap, ST = w.ScrollTrigger;
@@ -260,12 +257,11 @@
   };
   var mark = function (fields) {
     var first = null;
-    Object.keys(fields).forEach(function (name) {
-      var f = form.elements[name];
-      if (!f || !f.id) return;
+    Array.prototype.forEach.call(form.elements, function (f) {
+      if (!f.name || !f.id || !Object.prototype.hasOwnProperty.call(fields, f.name)) return;
       var err = document.getElementById(f.id + '-err');
       f.setAttribute('aria-invalid', 'true');
-      if (err) { err.textContent = msgs['field.' + name + '.' + fields[name]] || msgs['field.other']; err.hidden = false; }
+      if (err) { err.textContent = msgs['field.' + f.name + '.' + fields[f.name]] || msgs['field.other']; err.hidden = false; }
       if (!first) first = f;
     });
     if (first) first.focus();

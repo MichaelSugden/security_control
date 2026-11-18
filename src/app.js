@@ -41,6 +41,14 @@ export function loadRedirects(data) {
   return { map, gone, goneLang: data.goneLang === 'nl' ? 'nl' : null };
 }
 
+// Scheme as set by the outermost trusted proxy: with N trusted hops, the Nth X-Forwarded-Proto entry from the right.
+export function forwardedProto(req, trustProxy) {
+  const hops = trustProxy === true ? 1 : Number(trustProxy) || 0;
+  if (hops < 1) return '';
+  const entries = (req.get('x-forwarded-proto') || '').split(',').map((v) => v.trim().toLowerCase()).filter(Boolean);
+  return entries.length ? entries[Math.max(0, entries.length - hops)] : '';
+}
+
 export function createApp(options) {
   const {
     publicDir,
@@ -112,14 +120,14 @@ export function createApp(options) {
     else if (pathname === '/') target = '/nl/';
     else if (!pathname.endsWith('/') && site.pageDirs.has(`${pathname}/`)) target = `${pathname}/`;
 
-    const host = req.get('host') || '';
-    const wwwFix = /^www\./i.test(host);
-    const httpsFix = (req.get('x-forwarded-proto') || '').split(',')[0].trim().toLowerCase() === 'http';
+    // Host and scheme fixes only for the canonical host and its www form; targets are always built from CANONICAL_HOST.
+    const host = (req.get('host') || '').toLowerCase();
+    const canonical = host === CANONICAL_HOST || host === `www.${CANONICAL_HOST}`;
+    const wwwFix = host === `www.${CANONICAL_HOST}`;
+    const httpsFix = canonical && forwardedProto(req, trustProxy) === 'http';
     if (target === pathname && !wwwFix && !httpsFix) return next();
 
-    const location = wwwFix || httpsFix
-      ? `https://${host.replace(/^www\./i, '')}${target}${search}`
-      : `${target}${search}`;
+    const location = wwwFix || httpsFix ? `https://${CANONICAL_HOST}${target}${search}` : `${target}${search}`;
     return res.redirect(301, location);
   });
 
