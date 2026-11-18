@@ -307,6 +307,10 @@ html.lenis, html.lenis body { height: auto; }
   .hero__cue span { transform: none; opacity: .6; }
 }
 
+/* The House Of Safety page: logo above the H1, the form card centred */
+.hos__logo { display: block; width: min(100%, 22rem); height: auto; margin: 0 auto clamp(20px, 3vw, 32px); }
+.hos__in { position: relative; max-width: 46rem; padding-block: clamp(48px, 7vw, 96px) clamp(24px, 4vw, 48px); }
+
 /* Strips of nine panels (Services hub): a smaller title so the longest word fits a collapsed panel */
 @media (min-width: 1200px) { .panels--dense .panel__title { font-size: clamp(.8125rem, .5rem + .5vw, 1.0625rem); } }
 
